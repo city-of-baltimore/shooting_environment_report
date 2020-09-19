@@ -11,7 +11,7 @@ filename <- paste0("shooting_environment_report_", today(), ".nb.html")
 
 rmarkdown::render(
   input = "shooting_environment_report.Rmd",
-  output_file = "example.nb.html"
+  output_file = "example.nb.html",
   #output_file = filename,
   output_dir = "reports",
   clean = T,
