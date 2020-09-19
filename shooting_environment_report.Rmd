@@ -1,0 +1,327 @@
+---
+title: Weekly Shooting Environmental Report
+author: "Justin Elszasz, Mayor's Office Performance & Innovation"
+email: "justin.elszasz@baltimorecity.gov"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook:
+    code_folding: hide
+    fig_height: 5
+    fig_width: 8
+    toc: yes
+    toc_depth: 2
+---
+
+```{r setup, include = FALSE, echo = FALSE, message = FALSE, cache = FALSE}
+knitr::opts_chunk$set(
+  echo = F,
+  warning = F,
+  message = F,
+  include = T,
+  cache = F,
+  fig.width = 6, 
+  fig.height = 4,
+  out.width = "100%", 
+  out.height = "100%")
+
+knitr::clean_cache(clean = FALSE, path = knitr::opts_chunk$get("cache.path"))
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(RSocrata)
+library(sf)
+library(ggiteam)
+library(kableExtra)
+library(htmltools)
+library(leaflet)
+library(geojsonsf)
+library(DT)
+```
+
+Report includes **all open/new service requests as of `r format(Sys.time(), "%B %d, %Y")` at `r format(Sys.time(), "%I:%M %p")`** for the following service request types found in 500 foot buffers around homicides and shootings.
+
+**DPW**
+
+- SW-Cleaning
+- SW-HGW
+- SW-Dirty Alley
+- SW-Dirty Street
+- SW-SIU Clean Up
+- SW-Mixed Refuse
+- SW-Recycling
+- SW-Graffiti Removal 
+
+**DHCD**
+
+- HCD-Illegal Dumping
+- HCD-SIU
+- HCD-Sanitation Property
+
+**DOT**
+
+- TRM-Street Light Out
+- TRM-Fence Concern (Repair) 
+- TRS-48 Hour Parking/Abandoned Vehicle 
+- TRM-StLighting Inadequate/Too Bright
+
+
+**BGE**
+
+- BGE-StLight(s) Out 
+
+**BCRP**
+
+- RP-Street Lighting Repairs 
+
+**Liquor Board**
+
+- BCLB-Liquor License Complaint 
+
+
+```{r}
+buffer_size <- 500 * 0.3048 # 500 ft in meters
+red_orange <- "#f05a28"
+```
+
+```{r}
+# Get shooting data from Open Baltimore
+query <- paste0("https://data.baltimorecity.gov/resource/wsfq-mvij.json?$where=",
+                "(description like 'HOMICIDE' OR ",
+                "description like 'SHOOTING')")
+
+shootings <- read.socrata(query)
+```
+
+```{r}
+# get open SR's from Open Baltimore
+sr_query <- paste0("https://data.baltimorecity.gov/resource/9agw-sxsr.json",
+                   "?$where=",
+                   "((srtype like 'SW-Boarding' OR ",
+                   "srtype like 'SW-Cleaning' OR ",
+                   "srtype like 'SW-HGW' OR ",
+                   "srtype like 'SW-Dirty Alley' OR ",
+                   "srtype like 'SW-Dirty Street' OR ",
+                   "srtype like 'HCD-Illegal Dumping' OR ",
+                   "srtype like 'HCD-SIU' OR ",
+                   "srtype like 'SW-SIU Clean Up' OR ",
+                   "srtype like 'SW-Graffiti Removal' OR ",
+                   "srtype like 'SW-Mixed Refuse' OR ",
+                   "srtype like 'SW-Recycling' OR ",
+                   "srtype like 'TRM-Street Light Out' OR ",
+                   "srtype like 'TRM-Fence Concern (Repair)' OR ",
+                   "srtype like 'TRS-48 Hour Parking/Abandoned Vehicle' OR ",
+                   "srtype like 'BGE-StLight(s) Out' OR ",
+                   "srtype like 'RP-Street Lighting Repairs' OR ",
+                   "srtype like 'TRM-StLighting Inadequate/Too Bright' OR ",
+                   "srtype like 'BCLB-Liquor License Complaint' OR ",
+                   "srtype like 'HCD-Sanitation Property') AND ",
+                   "((srstatus like 'Open') OR (srstatus like 'New')))")
+
+sr <- read.socrata(url = sr_query)
+```
+
+```{r}
+url <- "https://data.baltimorecity.gov/resource/9gmf-s2ba.geojson"
+districts <- read_sf(url)
+```
+
+```{r}
+recent_shooting_victim <- shootings %>% 
+  mutate(
+    crimedate = as.Date(crimedate),
+    longitude = as.numeric(longitude),
+    latitude = as.numeric(latitude),
+  ) %>%
+  filter(crimedate >= max(crimedate) - 7)
+```
+
+```{r}
+# Some cleaning
+recent_shootings <- recent_shooting_victim %>% 
+  # ---- this converts to incident instead of victim
+  group_by(crimedate, crimetime, location) %>%
+  filter(row_number() == 1) %>%
+  ungroup()
+
+recent_shootings <- recent_shootings %>%
+  filter(!is.na(latitude)) %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = 4326)
+```
+
+
+```{r}
+sr <- sr %>% 
+  mutate(
+    latitude = as.numeric(latitude), 
+    longitude = as.numeric(longitude),
+    neighborhood = toupper(neighborhood))
+
+sr <- sr %>%
+  filter(!is.na(latitude)) %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = 4326)
+```
+
+
+# Shooting Locations
+
+### There have been `r nrow(recent_shooting_victim)` homicide or shooting victims at `r nrow(recent_shootings)` incidents between `r min(recent_shootings$crimedate)` and `r max(recent_shootings$crimedate)`.
+
+```{r}
+st_crs(recent_shootings) <- 4326
+
+recent_shootings_m <- recent_shootings %>%
+  st_transform(2248)
+
+recent_shooting_buffers <- st_buffer(recent_shootings_m, 500)
+recent_shooting_buffers <- st_transform(recent_shooting_buffers, 4326)
+```
+
+```{r}
+sr_near_shootings <- st_intersection(sr, recent_shooting_buffers)
+```
+
+Hover over red points to see homicide/shooting info, hover over blue points for service request info.
+
+```{r}
+shooting_labels <- paste0(
+  "<b>", recent_shootings$description, "</b><br>",
+  recent_shootings$location, "<br>",
+  recent_shootings$crimedate, "<br>",
+  recent_shootings$neighborhood
+)
+
+sr_labels <- paste0(
+  sr_near_shootings$srtype, "<br>",
+  "Status: ", sr_near_shootings$srstatus, "<br>",
+  "Created on ", sr_near_shootings$createddate, "<br>",
+  "SR #: ", sr_near_shootings$servicerequestnum
+)
+
+district_labels <- paste0(
+  districts$dist_name, " District"
+)
+```
+
+
+```{r fig.width = 6, fig.height = 10, out.height="100%", out.width="100%", include = T, echo = T, results = "asis"}
+
+map <- leaflet() %>%
+  setView(lng = -76.6, lat = 39.3, zoom = 11) %>%
+  #addTiles() 
+  #addProviderTiles(providers$Stamen.TonerLite) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  #addTiles() %>%
+    addPolygons(data = districts,
+                label = ~lapply(district_labels, HTML),
+                fillOpacity = 0,
+                opacity = .7,
+                color = iteam.colors[3],
+                weight = 2) %>%
+  addPolygons(data = st_transform(recent_shooting_buffers, 4326),
+              color = red_orange,
+              weight = 1.5,
+              fill = NA) %>%
+  addCircles(data = recent_shootings,
+             color = red_orange,
+             fillColor = red_orange,
+             fillOpacity = 1,
+             opacity = 1,
+             label = ~lapply(shooting_labels, HTML)) %>%
+  addCircles(data = sr_near_shootings,
+             color = iteam.colors[5],
+             fillColor = iteam.colors[5],
+             fillOpacity = .8,
+             opacity = 0,
+             label = ~lapply(sr_labels, HTML))
+
+tagList(map)
+```
+
+```{r}
+recent_shootings %>% 
+  as.data.frame() %>%
+  select(
+    crimedate, 
+         crimetime,
+         description,
+         location,
+         inside_outside,
+         district
+    ) %>%
+  arrange(crimedate, crimetime) %>%
+  # kable("html") %>%
+  # kable_styling(bootstrap_options = "basic")
+  datatable(filter = "top", options = list(scrollX = F))
+```
+
+# Open Service Request Summary Table
+
+
+```{r results = "asis"}
+sr_near_shootings %>%
+  as.data.frame() %>%
+  count(district, location, srtype) %>%
+  spread(key = srtype, value = n) %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  mutate(`Total Open SRs` =  rowSums(.[-1:-4])) %>% 
+  arrange(desc(`Total Open SRs`)) %>%
+  # kable("html") %>%
+  # kable_styling(bootstrap_options = "basic") 
+  datatable(filter = "top", options = list(scrollX = F))
+```
+
+# Open Service Request Lists by Police District for Each Location {.tabset}
+
+```{r results = "asis", include = TRUE, echo = TRUE}
+district_list <- unique(sr_near_shootings$district)
+
+for (dist in district_list) {
+  
+  cat("##", dist, '<br>', '\n')
+  
+  dist_sr_near_shootings <- sr_near_shootings %>% filter(district == dist)
+  
+  for (loc in unique(dist_sr_near_shootings$location)) {
+    shooting_event <- dist_sr_near_shootings %>%
+      filter(location == loc,
+             district == dist) %>%
+      as.data.frame() %>%
+      filter(row_number() == 1)
+    
+    sr_table <- dist_sr_near_shootings %>%
+      filter(location == loc) %>%
+      as.data.frame() %>%
+      select(
+        agency,
+        srtype,
+        createddate,
+        srstatus,
+        address,
+        servicerequestnum
+      ) %>%
+      arrange(srtype, createddate) 
+    
+    cat(paste("<h3>", loc, "</h3>",
+              shooting_event$neighborhood.1, " // ",
+              shooting_event$description, " // ",
+              shooting_event$crimedate
+              
+    ))
+    
+    sr_table %>%
+      kable("html") %>%
+      kable_styling(bootstrap_options = "basic") %>%
+      htmltools::HTML() %>% 
+      print()
+    
+  } 
+  
+  cat('\n', '<br>', '\n\n')
+}
+
+```
+
