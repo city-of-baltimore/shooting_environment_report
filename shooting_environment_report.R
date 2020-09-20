@@ -11,7 +11,7 @@ filename <- paste0("shooting_environment_report_", today(), ".nb.html")
 
 rmarkdown::render(
   input = "shooting_environment_report.Rmd",
-  output_file = "example.nb.html",
+  output_file = filename,
   output_dir = "reports",
   clean = T,
   envir = new.env()
@@ -39,8 +39,9 @@ The attached report identifies all currently open service requests within a 500 
 
 Thank you in advance for your attention.<br><br>
 
-Please contact <a href='mailto:justin.elszasz@baltimorecity'>Justin Elszasz</a> in the Mayor's Office of Performance and Innovation for questions regarding this report.<br><br><br>
+Please contact <a href='mailto:justin.elszasz@baltimorecity'>Justin Elszasz</a> in the Mayor's Office of Performance and Innovation for questions regarding this report.<br>
 
+<img src='https://images.squarespace-cdn.com/content/5b32397bf79392af6b062048/1578532761811-Y6J7YANV433GI2O8YPXV/OPI_Logo.png?content-type=image%2Fpng' width='200'><br><br><br>
 
 <i>(Hey team, this was just a test. Take a look through the report when you get a chance and see if everything is clear and working. Excited to hear what you think of blasting this to a bunch of people (and who should be on that list) every week and how we might track how these are getting done.)</i>
 "
