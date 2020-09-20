@@ -1,6 +1,7 @@
 ---
 title: Weekly Shooting Environmental Report
-author: "Justin Elszasz, Mayor's Office Performance & Innovation"
+subtitle: ""
+author: <a href=mailto:justin.elszasz@baltimorecity.gov>justin.elszasz@baltimorecity.gov</a>
 email: "justin.elszasz@baltimorecity.gov"
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output:
@@ -10,7 +11,24 @@ output:
     fig_width: 8
     toc: yes
     toc_depth: 2
+    toc_float: true
 ---
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300&display=swap');
+</style>
+
+```{css, echo=FALSE}
+* {
+  font-family: 'Roboto', sans-serif;
+}
+
+h1, .h1  {
+    margin-top: 70px;
+}
+```
+
+<img src=`r "https://images.squarespace-cdn.com/content/5b32397bf79392af6b062048/1578532761811-Y6J7YANV433GI2O8YPXV/OPI_Logo.png?content-type=image%2Fpng"` width="200">
 
 ```{r setup, include = FALSE, echo = FALSE, message = FALSE, cache = FALSE}
 knitr::opts_chunk$set(
@@ -27,7 +45,7 @@ knitr::opts_chunk$set(
 knitr::clean_cache(clean = FALSE, path = knitr::opts_chunk$get("cache.path"))
 ```
 
-```{r}
+```{r load_packages}
 library(tidyverse)
 library(lubridate)
 library(RSocrata)
@@ -207,7 +225,7 @@ district_labels <- paste0(
 ```
 
 
-```{r fig.width = 6, fig.height = 10, out.height="100%", out.width="100%", include = T, echo = T, results = "asis"}
+```{r fig.width = 6, fig.height = 10, out.height="100%", out.width="100%", include = T, results = "asis"}
 
 map <- leaflet() %>%
   setView(lng = -76.6, lat = 39.3, zoom = 11) %>%
@@ -276,7 +294,7 @@ sr_near_shootings %>%
 
 # Open Service Request Lists by Police District for Each Location {.tabset}
 
-```{r results = "asis", include = TRUE, echo = TRUE}
+```{r results = "asis"}
 district_list <- unique(sr_near_shootings$district)
 
 for (dist in district_list) {
@@ -325,3 +343,8 @@ for (dist in district_list) {
 
 ```
 
+
+
+```{r}
+sessionInfo()
+```
