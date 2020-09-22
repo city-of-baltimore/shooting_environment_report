@@ -26,6 +26,14 @@ output:
 h1, .h1  {
     margin-top: 70px;
 }
+
+div.blue { 
+  margin-top: 20px;
+  margin-bottom: 20px;
+  background-color: #B2DBE4; 
+  border-radius: 5px; 
+  padding: 3px;
+}
 ```
 
 <img src=`r "https://images.squarespace-cdn.com/content/5b32397bf79392af6b062048/1578532761811-Y6J7YANV433GI2O8YPXV/OPI_Logo.png?content-type=image%2Fpng"` width="200">
@@ -186,7 +194,9 @@ sr <- sr %>%
 
 # Shooting Locations
 
+<div class = "blue">
 ### There have been `r nrow(recent_shooting_victim)` homicide or shooting victims at `r nrow(recent_shootings)` incidents between `r min(recent_shootings$crimedate)` and `r max(recent_shootings$crimedate)`.
+</div>
 
 ```{r}
 st_crs(recent_shootings) <- 4326
@@ -228,11 +238,8 @@ district_labels <- paste0(
 ```{r fig.width = 6, fig.height = 10, out.height="100%", out.width="100%", include = T, results = "asis"}
 
 map <- leaflet() %>%
-  setView(lng = -76.6, lat = 39.3, zoom = 11) %>%
-  #addTiles() 
-  #addProviderTiles(providers$Stamen.TonerLite) %>% 
+  setView(lng = -76.6, lat = 39.3, zoom = 11) %>% 
   addProviderTiles(providers$CartoDB.Positron) %>%
-  #addTiles() %>%
     addPolygons(data = districts,
                 label = ~lapply(district_labels, HTML),
                 fillOpacity = 0,
