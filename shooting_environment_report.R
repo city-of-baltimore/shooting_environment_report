@@ -1,63 +1,42 @@
-#!/usr/bin/Rscript
+#!/usr/local/bin/Rscript
 library(tidyverse)
 library(lubridate)
 library(emayili)
 library(rmarkdown)
-library(googlesheets4)
 
-config <- read.csv("config.csv")
-recipients <- read_sheet(config$recipient_url)
+config <- read_csv("config.csv")
+recipients <- read_csv(config$recipient_url)
 filename <- paste0("shooting_environment_report_", today(), ".nb.html")
+
+# not sure why this is needed to find pandoc
+Sys.setenv(RSTUDIO_PANDOC="/Applications/RStudio.app/Contents/MacOS/pandoc")
 
 rmarkdown::render(
   input = "shooting_environment_report.Rmd",
   output_file = filename,
+  #output_file = "example.nb.html",
   output_dir = "reports",
-  clean = T,
-  envir = new.env()
+  clean = T
 )   
 
 email_subject <- paste0(
-  "[TEST] Shooting Environment Report, ", today()
+  "Shooting Environment Report, ", today()
 )
 
-email_message <- "
-Greetings,<br><br>
-
-The attached report identifies all currently open service requests within a 500 ft. radius of recent homicides and shootings in Baltimore. The following agencies may have open service requests identified in this report:<br>
-
-<ul>
-  <li>DOT</li>
-  <li>DPW</li>
-  <li>DHCD</li>
-  <li>BGE</li>
-  <li>BCRP</li>
-  <li>Liquor Board</li>
-</ul>
-
-<b>Environmental issues are a critical public safety concern.</b> Addressing these issues in areas of recent violence can help stabilize the area and prevent repeat events in the vicinity.<br><br>
-
-Thank you in advance for your attention.<br><br>
-
-Please contact <a href='mailto:justin.elszasz@baltimorecity'>Justin Elszasz</a> in the Mayor's Office of Performance and Innovation for questions regarding this report.<br>
-
-<img src='https://images.squarespace-cdn.com/content/5b32397bf79392af6b062048/1578532761811-Y6J7YANV433GI2O8YPXV/OPI_Logo.png?content-type=image%2Fpng' width='200'><br><br><br>
-
-<i>(Hey team, this was just a test. Take a look through the report when you get a chance and see if everything is clear and working. Excited to hear what you think of blasting this to a bunch of people (and who should be on that list) every week and how we might track how these are getting done.)</i>
-"
-
+email_message <-  read_file("email_message.txt")
 
 email <- envelope() %>%
   emayili::from(config$from_address) %>%
   emayili::to(recipients$email_address) %>%
+  #emayili::to("justin.elszasz@baltimorecity.gov") %>%
   emayili::subject(email_subject) %>%
   emayili::html(email_message) %>%
   emayili::attachment(path = paste0("reports/", filename),
-                      type = "text/html")
+                     type = "text/html")
 
 smtp <- server(host = "smtp.gmail.com",
                port = 465,
                username = config$from_address,
                password = config$password)
 
-smtp(email, verbose = TRUE)
+smtp(email)

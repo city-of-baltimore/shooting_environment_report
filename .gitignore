@@ -5,6 +5,9 @@ config.csv
 # just leave example report in git
 /reports/shooting_environment_report_*.nb.html
 
+# log files
+/logs/*
+
 # My standard gitignore for R projects
 
 # Raw data

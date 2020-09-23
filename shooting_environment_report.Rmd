@@ -352,6 +352,6 @@ for (dist in district_list) {
 
 
 
-```{r}
+```{r echo = F, include = F}
 sessionInfo()
 ```
