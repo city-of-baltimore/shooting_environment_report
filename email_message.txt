@@ -13,6 +13,10 @@ The attached report identifies all currently open service requests within a 500 
 
 <b>Environmental issues are a critical public safety concern.</b> Addressing these issues in areas of recent violence can help stabilize the area and prevent repeat events in the vicinity.<br><br>
 
+<b>Note to BPD</b>Police are encouraged to use their department email (@baltimorepolice.org) when submitting 311 service requests. This can be used to identify priority service requests. A field has been added to the service request in the last table of the report to indicate whether the service request was initiated with an @baltimorepolice.org email address.<br><br>
+
+This report is now run every Wednesday at 9am (previously Tuesday at 4pm). <i>The report now uses internal data sources as opposed to Open Baltimore.</i> This will ensure more timely information.<br><br>
+
 Thank you in advance for your attention.<br><br>
 
 Please contact <a href='mailto:justin.elszasz@baltimorecity'>Justin Elszasz</a> in the Mayor's Office of Performance and Innovation for questions regarding this report.<br><br><br>

@@ -4,6 +4,11 @@ config.csv
 
 # just leave example report in git
 /reports/shooting_environment_report_*.nb.html
+/reports/shooting_environment_report_*.csv
+/reports/sent/shooting_environment_report_*.nb.html
+/reports/sent/shooting_environment_report_*.csv
+/reports/performance_*.nb.html
+/reports/sent/performance_*.nb.html
 
 # log files
 /logs/*

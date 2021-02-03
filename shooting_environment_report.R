@@ -3,40 +3,283 @@ library(tidyverse)
 library(lubridate)
 library(emayili)
 library(rmarkdown)
+library(notifier)
+library(odbc)
+library(DBI)
 
+# config for automation
 config <- read_csv("config.csv")
 recipients <- read_csv(config$recipient_url)
 filename <- paste0("shooting_environment_report_", today(), ".nb.html")
+analytics_filename <- paste0("performance_analytics_", today(), ".nb.html")
+#csv_filename <- paste0("shooting_environment_report_data_", "2020-12-08", ".csv")
 
 # not sure why this is needed to find pandoc
 Sys.setenv(RSTUDIO_PANDOC="/Applications/RStudio.app/Contents/MacOS/pandoc")
 
-rmarkdown::render(
-  input = "shooting_environment_report.Rmd",
-  output_file = filename,
-  #output_file = "example.nb.html",
-  output_dir = "reports",
-  clean = T
-)   
 
-email_subject <- paste0(
-  "Shooting Environment Report, ", today()
+tryCatch({
+  # connection to sql server
+  con <- odbc::dbConnect(
+    odbc::odbc(),
+    Driver = "FreeTDS Driver",
+    Server = Sys.getenv("BALT_SQL"),
+    Database = Sys.getenv("CITISTAT_DB"),
+    uid = Sys.getenv("CITY_USERNAME"),
+    pwd = Sys.getenv("CITY_PWD"),
+    Port = 1433
+  )
+}, error = function(err) {
+  
+  # if analytics report fails to render send me an email
+  notify("Please connect to VPN and manually rerun.",  title  = "Shooting Environment Report")
+  
+  render_email <- envelope() %>%
+    emayili::from(config$from_address) %>%
+    emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+    emayili::subject("Shooting Environment Report: Not Connected to VPN") %>%
+    emayili::html("Connect to VPN and manually run report script.")
+  
+  smtp <- server(host = "smtp.gmail.com",
+                 port = 465,
+                 username = config$from_address,
+                 password = config$password)
+  
+  smtp(render_email)
+}
 )
 
-email_message <-  read_file("email_message.txt")
 
-email <- envelope() %>%
-  emayili::from(config$from_address) %>%
-  emayili::to(recipients$email_address) %>%
-  #emayili::to("justin.elszasz@baltimorecity.gov") %>%
-  emayili::subject(email_subject) %>%
-  emayili::html(email_message) %>%
-  emayili::attachment(path = paste0("reports/", filename),
-                     type = "text/html")
+message(paste0(Sys.time(), ": Getting crime data from SQL server"))
 
-smtp <- server(host = "smtp.gmail.com",
-               port = 465,
-               username = config$from_address,
-               password = config$password)
+# part 1 crime query
+violent_crime <- tbl(con, "Part1_Crime")  %>%
+  filter(`Crime Date` >= "2020-01-01")
 
-smtp(email)
+# sr query
+sr <- tbl(con, "CSR") %>%
+  filter(`Created Date` >= "2020-01-01")
+
+# run queries 
+violent_crime <- collect(violent_crime)
+message(paste0(Sys.time(), ": Crime data retrieved from SQL server"))
+sr <- collect(sr)
+message(paste0(Sys.time(), ": Service request data retrieved from SQL server"))
+
+# clean up field names in violent crime
+names(violent_crime)<-str_replace_all(names(violent_crime), c(" " = "" ))
+names(sr)<-str_replace_all(names(sr), c(" " = "" ))
+
+violent_crime <- violent_crime %>%
+  rename_all(funs(tolower)) %>%
+  rename(district = "policedistrict")
+
+sr <- sr %>%
+  rename_all(funs(tolower)) %>%
+  rename("servicerequestnum" = "servicerequestnumber")
+
+# get date of last crime in table
+last_crime <- max(as.Date(violent_crime$crimedate), na.rm = T)
+
+# filter crime down to shootings in last week 
+shootings <- violent_crime %>%
+  filter(description %in% c("HOMICIDE", "SHOOTING"),
+         crimedate <= last_crime - 2,
+         crimedate >= last_crime - 9)
+
+# get latitude and longitude from geometry
+# sr <- sr %>%
+#   mutate(
+#     latitude = unlist(map(sr$geometry,1)),
+#     longitude = unlist(map(sr$geometry,2)))
+
+# Render analytics report ------------------
+
+message(paste0(Sys.time(), ": Starting report render"))
+
+tryCatch({
+  
+  if (last_crime >= today() -  7){
+    
+    # render analytics report
+    rmarkdown::render(
+      input = "analytics.Rmd",
+      output_file = analytics_filename,
+      #output_file = "example.nb.html",
+      #output_file = "garbage.nb.html",
+      output_dir = "reports",
+      clean = T
+    ) 
+    
+  } else {
+    
+    # send me an email if the data out of date (deprecate)
+    notify("Open Baltimore is more than one week out of date. Report not rendered.",  
+           title  = "Shooting Environment Report")
+    
+    ob_ood_email <- envelope() %>%
+      emayili::from(config$from_address) %>%
+      emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+      emayili::subject("Shooting Environment Report: Open Baltimore Out of Date") %>%
+      emayili::html("Open Baltimore is more than one week out of date. Contact BPD & BCIT to refresh.")
+    
+    smtp <- server(host = "smtp.gmail.com",
+                   port = 465,
+                   username = config$from_address,
+                   password = config$password)
+    
+    smtp(ob_ood_email)
+  }
+  
+  
+}, error = function(err) {
+  
+  # if analytics report fails to render send me an email
+  notify("Analytics report rendering failed. Check logs.",  title  = "Shooting Environment Report")
+  
+  render_email <- envelope() %>%
+    emayili::from(config$from_address) %>%
+    emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+    emayili::subject("Shooting Environment Report: Analytics Render Failure") %>%
+    emayili::html("Analytics report failed to render. Check logs.")
+  
+  smtp <- server(host = "smtp.gmail.com",
+                 port = 465,
+                 username = config$from_address,
+                 password = config$password)
+  
+  smtp(render_email)
+  
+})
+
+
+# Render new shooting environment report ---------------
+
+tryCatch({
+  
+  if (last_crime >= today() -  7){
+    
+    # render report
+    rmarkdown::render(
+      input = "shooting_environment_report.Rmd",
+      output_file = filename,
+      #output_file = "example.nb.html",
+      #output_file = "garbage.nb.html",
+      output_dir = "reports",
+      clean = T
+    ) 
+    
+  } else {
+    
+    # if data out of date send me an email (deprecate)
+    notify("Open Baltimore is more than one week out of date. Report not rendered.",  title  = "Shooting Environment Report")
+    
+    ob_ood_email <- envelope() %>%
+      emayili::from(config$from_address) %>%
+      emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+      emayili::subject("Shooting Environment Report: Open Baltimore Out of Date") %>%
+      emayili::html("Open Baltimore is more than one week out of date. Contact BPD & BCIT to refresh.")
+    
+    smtp <- server(host = "smtp.gmail.com",
+                   port = 465,
+                   username = config$from_address,
+                   password = config$password)
+    
+    smtp(ob_ood_email)
+  }
+  
+  
+}, error = function(err) {
+  
+  # if report render fails send me an email
+  notify("Report Rendering Failed. Check Logs.",  title  = "Shooting Environment Report")
+  
+  render_email <- envelope() %>%
+    emayili::from(config$from_address) %>%
+    emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+    emayili::subject("Shooting Environment Report: Render Failure") %>%
+    emayili::html("Shooting environment report failed to render. Check logs.")
+  
+  smtp <- server(host = "smtp.gmail.com",
+                 port = 465,
+                 username = config$from_address,
+                 password = config$password)
+  
+  smtp(render_email)
+  
+})
+
+
+# Send out new report and analytics report ---------
+
+tryCatch({
+  
+  if (last_crime >= today() -  7){
+    
+    #attempt to send email
+    email_subject <- paste0(
+      "Shooting Environment Report, ", today()
+    )
+    
+    email_message <-  read_file("email_message.txt")
+    csv_filename <- paste0("shooting_environment_report_data_", today(), ".csv")
+    
+    email <- envelope() %>%
+      emayili::from(config$from_address) %>%
+      emayili::to(recipients$email_address) %>%
+      #emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+      emayili::subject(email_subject) %>%
+      emayili::html(email_message) %>%
+      emayili::attachment(
+        path = paste0("reports/", filename),
+        type = "text/html") %>%
+      emayili::attachment(
+        path = paste0("reports/", analytics_filename),
+        type = "text/html") %>%
+      emayili::attachment(
+        path = paste0("reports/", csv_filename),
+        type = "text/comma-separated-values")
+    
+    smtp <- server(host = "smtp.gmail.com",
+                   port = 465,
+                   username = config$from_address,
+                   password = config$password)
+    
+    message(paste0(Sys.time(), ": Attempting email send"))
+    smtp(email)
+    message(paste0(Sys.time(), ": Emails sent"))
+    
+    # notify me on laptop that report is sent
+    notify("Report sent.",  title  = "Shooting Environment Report")
+    
+    # move files to sent folder for analytics
+    file.copy(paste0("reports/", csv_filename), "reports/sent/")
+    file.copy(paste0("reports/", filename), "reports/sent/")
+    file.copy(paste0("reports/", analytics_filename), "reports/sent/")
+    file.remove(paste0("reports/", csv_filename))
+    file.remove(paste0("reports/", filename))
+    file.remove(paste0("reports/", analytics_filename))
+  }
+  
+  
+}, error = function(err) {
+  
+  # notification on laptop if email fails
+  notify("Report email failed to send.",  title  = "Shooting Environment Report")
+  
+  # also try to email me that the email failed
+  render_email <- envelope() %>%
+    emayili::from(config$from_address) %>%
+    emayili::to(Sys.getenv("CITY_EMAIL")) %>%
+    emayili::subject("Shooting Environment Report: Email Failure") %>%
+    emayili::html("Shooting environment email failed to send. Check logs.")
+  
+  smtp <- server(host = "smtp.gmail.com",
+                 port = 465,
+                 username = config$from_address,
+                 password = config$password)
+  
+  smtp(render_email)
+  
+})
+

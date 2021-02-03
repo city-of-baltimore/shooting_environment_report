@@ -1,0 +1,262 @@
+---
+title: "Shooting Environment Service Request Performance"
+subtitle: ""
+author: <a href=mailto:justin.elszasz@baltimorecity.gov>justin.elszasz@baltimorecity.gov</a>
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook:
+    code_folding: hide
+    fig_height: 4
+    fig_width: 6
+    toc: yes
+    toc_depth: 2
+    toc_float: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300&display=swap');
+</style>
+
+```{css, echo=FALSE}
+* {
+  font-family: 'Roboto', sans-serif;
+}
+
+h1, .h1  {
+    margin-top: 70px;
+}
+```
+
+<img src=`r "https://images.squarespace-cdn.com/content/5b32397bf79392af6b062048/1578532761811-Y6J7YANV433GI2O8YPXV/OPI_Logo.png?content-type=image%2Fpng"` width="200">
+
+```{r setup, include = FALSE, echo = FALSE, message = FALSE, cache = FALSE}
+knitr::opts_chunk$set(
+  echo = F,
+  warning = F,
+  message = F,
+  include = T,
+  cache = F,
+  fig.width = 6, 
+  fig.height = 4,
+  out.width = "100%", 
+  out.height = "100%"
+  )
+
+knitr::clean_cache(
+  clean = FALSE, 
+  path = knitr::opts_chunk$get("cache.path")
+  )
+```
+
+```{r load_packages}
+library(tidyverse)
+library(lubridate)
+library(sf)
+library(leaflet)
+library(ggiteam)
+library(kableExtra)
+library(htmltools)
+library(DT)
+library(RSocrata)
+```
+
+
+```{r}
+report_list <- list.files("reports/sent/", pattern = "*.csv")
+```
+
+```{r}
+for (report in report_list){
+  
+  report_temp <- read_csv(paste0("reports/sent/", report))
+  report_temp$reportdate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  
+  if (report == report_list[1]){
+    all_reports <- report_temp
+  } else {
+    # should add a field for the report date
+    all_reports <- bind_rows(all_reports, report_temp)
+  }
+}
+```
+
+```{r}
+sr_filtered <- sr %>%
+  filter(servicerequestnum %in% unique(all_reports$servicerequestnum)) %>%
+  left_join(all_reports %>% select(servicerequestnum, reportdate), by = c("servicerequestnum"))
+```
+
+#  Overall Percent Remaining Open From Previous Reports: `r ((sr_filtered %>% filter(srstatus %in% c("Open", "New")) %>% nrow) / nrow(sr_filtered)) %>% scales::percent()`
+
+# Number of Total Service Requests Remaining Open
+
+```{r}
+sr_filtered %>%
+  filter(srstatus %in% c("Open", "New")) %>%
+  count(srtype)  %>%
+  arrange(desc(n))
+```
+
+# Number of Service Requests Originally in Each Report
+
+```{r, fig.width = 6, fig.height = 2, out.width = "100%"}
+all_reports %>% 
+  count(reportdate) %>%
+  ggplot(aes(reportdate, n)) +
+  geom_col() +
+  geom_text(aes(reportdate, n + 20, label = n)) +
+  geom_text(aes(reportdate, 50, label = format(reportdate, "%m/%d")), color = "white") +
+  scale_x_datetime(breaks = "1 month", date_labels = format("%B\n%Y"))  +
+  theme_iteam_presentations() +
+  labs(x = "Date Report Sent") +
+  theme(axis.title.y = element_blank()) 
+  
+```
+
+  
+
+# On-time Performance for Closed SRs: `r ontime_pct <- sr_filtered %>% mutate(ontime = ifelse(statusdate <= duedate, T, F)) %>% filter(srstatus == "Closed") %>% count(ontime) %>% mutate(pct = round(100* n / sum(n)), 0) %>% filter(ontime == T) %>% select(pct) %>% pull(); paste0(ontime_pct, "%")`
+
+
+```{r fig.width = 6, fig.height = 2}
+# reports_all_duedates_passed <- sr_filtered %>%
+#   group_by(reportdate) %>%
+#   summarise(last_duedate = max(duedate)) %>%
+#   filter(last_duedate < today()) %>%
+#   select(reportdate) %>%
+#   pull()
+# 
+# sr_filtered %>%
+#   filter(reportdate %in% reports_all_duedates_passed) %>%
+#   filter(duedate < today()) %>%
+#   count(agency, reportdate, closedate <= duedate) %>%
+#   group_by(agency, reportdate) %>%
+#   mutate(pct = n / sum(n)) %>%
+#   filter(`closedate <= duedate` == TRUE) %>%
+#   ggplot(aes(reportdate, pct, color = agency)) +
+#   geom_line() +
+#   geom_point() +
+#   theme_iteam_google_docs() +
+#   scale_y_continuous(limits = c(0,1), labels = scales::percent) +
+#     #scale_x_datetime(breaks = "1 month", date_labels = format("%B\n%Y"))  +
+#   theme_iteam_google_docs() +
+#   labs(title = "On-Time Performance for Past Reports",
+#        x = "Date Report Sent") +
+#   theme(axis.title.y = element_blank()) 
+#   
+```
+
+```{r fig.width = 4, fig.height = 2, out.width="100%"}
+reports_all_duedates_passed <- sr_filtered %>%
+  group_by(reportdate) %>%
+  summarise(last_duedate = max(duedate)) %>%
+  filter(last_duedate < today()) %>%
+  select(reportdate) %>%
+  pull()
+
+sr_filtered %>%
+  filter(reportdate %in% reports_all_duedates_passed) %>%
+  filter(duedate < today()) %>%
+  count(srtype, reportdate, closedate <= duedate) %>%
+  group_by(srtype, reportdate) %>%
+  mutate(pct = n / sum(n)) %>%
+  filter(`closedate <= duedate` == TRUE) %>%
+  ggplot(aes(reportdate, pct, color = srtype)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~srtype) +
+  theme_iteam_presentations() +
+  scale_y_continuous(limits = c(0,1), labels = scales::percent) +
+    #scale_x_datetime(breaks = "1 month", date_labels = format("%B\n%Y"))  +
+  theme_iteam_google_docs() +
+  labs( x = "Date Report Sent",
+       y = "Percent SRs Completed On-Time")
+  
+```
+
+
+
+
+# Percent of SRs Closed Within Timeframe 
+
+```{r fig.width = 8, fig.height = 6, out.width="100%"}
+levels <- c(
+  "Within 7 Days",
+  "Within 14 Days",
+  "Within 30 Days",
+  "More Than 30 Days"
+)
+
+
+close_windows <- sr_filtered %>%
+  mutate(close_window = case_when(
+    closedate <= (reportdate + days(7)) ~ "Within 7 Days", 
+    closedate <= (reportdate + days(14)) ~ "Within 14 Days", 
+    closedate <= (reportdate + days(30)) ~ "Within 30 Days",
+    TRUE ~ "More Than 30 Days"),
+    close_window = factor(close_window, levels = levels)) %>%
+  count(reportdate, srtype, close_window) %>%
+  group_by(reportdate, srtype) %>%
+  arrange(close_window) %>%
+  mutate(pct = n / sum(n),
+         cumsum = cumsum(n),
+         cumpct = cumsum / sum(n)) %>%
+  filter(!(close_window == "More Than 30 Days")) %>%
+  ungroup() 
+
+
+close_windows %>%
+  mutate(reportdate = as.factor(reportdate)) %>%
+  ggplot(aes(x = close_window, y = cumpct, group = reportdate, color = reportdate)) +
+  geom_line(size = 1) +
+  geom_point(size = 1) +
+  facet_wrap(~srtype) +
+  ylim(c(0, 1)) +
+  theme_iteam_presentations() +
+  scale_color_brewer() +
+  scale_y_continuous(
+    name = "Percent Service Requests Completed Within Timeframe", 
+    limits = c(0,1), 
+    labels = scales::percent) +
+  labs(x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 90))
+#scale_color_datetime(low = "gray90", high = "gray10")
+
+```
+
+# Rapid City Response to Shooting Sites
+Percent of service requests that are closed with 7 days of being opened.
+
+```{r out.width = "100%", fig.width = 8, fig.height = 6}
+close_windows %>%
+  mutate(reportdate = as.Date(reportdate)) %>%
+  filter(close_window == "Within 7 Days",
+         reportdate < today() - 7) %>%
+  ggplot(aes(reportdate, pct)) +
+  geom_line() + 
+  geom_point() + 
+  geom_text(
+    aes(reportdate, pct, 
+        label = ifelse(reportdate == max(reportdate), paste0(100 * round(pct, 2), "%\n", n, " SRs"), "")),
+    nudge_y = -.1,
+    nudge_x = -3,
+    hjust = 1) + 
+  facet_wrap(~srtype) +
+  theme_iteam_presentations() +
+  scale_y_continuous(labels = scales::percent)+
+  scale_x_date() +
+  labs(
+    y = "Percent of SR's Closed Within 7 Days",
+    x = "Report Date"
+  )
+```
+
+
+
+
+```{r include=F}
+sessionInfo()
+```
+
