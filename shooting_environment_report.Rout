@@ -1,0 +1,2907 @@
+
+R version 4.0.5 (2021-03-31) -- "Shake and Throw"
+Copyright (C) 2021 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+[Previously saved workspace restored]
+
+> #!/usr/local/bin/Rscript
+> library(tidyverse)
+-- Attaching packages --------------------------------------- tidyverse 1.3.1 --
+v ggplot2 3.3.3     v purrr   0.3.4
+v tibble  3.1.1     v dplyr   1.0.6
+v tidyr   1.1.3     v stringr 1.4.0
+v readr   1.4.0     v forcats 0.5.1
+-- Conflicts ------------------------------------------ tidyverse_conflicts() --
+x dplyr::filter() masks stats::filter()
+x dplyr::lag()    masks stats::lag()
+> library(lubridate)
+
+Attaching package: 'lubridate'
+
+The following objects are masked from 'package:base':
+
+    date, intersect, setdiff, union
+
+> library(emayili)
+
+Attaching package: 'emayili'
+
+The following object is masked from 'package:graphics':
+
+    text
+
+> library(rmarkdown)
+> #library(notifier)
+> library(odbc)
+> library(DBI)
+> library(dplyr)
+> library(knitr)
+> 
+> setwd("C:\\Users\\SA_OPI\\Documents\\GitHub\\shooting_environment_report")
+> # config for automation
+> config <- read_csv("C:\\Users\\SA_OPI\\Downloads\\config.csv")
+
+-- Column specification --------------------------------------------------------
+cols(
+  recipient_url = col_character(),
+  from_address = col_character(),
+  password = col_character()
+)
+
+> guests <- read_csv("C:\\Users\\SA_OPI\\Downloads\\Shooting Environment Report Recipient List - Sheet1.csv")
+
+-- Column specification --------------------------------------------------------
+cols(
+  email_address = col_character()
+)
+
+> recipients <- config$recipient_url
+> filename <- paste0("shooting_environment_report_", today(), ".nb.html")
+> analytics_filename <- paste0("performance_analytics_", today(), ".nb.html")
+> #csv_filename <- paste0("shooting_environment_report_data_", "2020-12-08", ".csv")
+> 
+> # not sure why this is needed to find pandoc
+> Sys.setenv(RSTUDIO_PANDOC="C:\\Program Files\\Pandoc")
+> 
+> 
+> tryCatch({
++   # connection to sql server
++   con <-dbConnect(odbc::odbc(),
++                   Driver = "SQL Server",
++                   Server = "BALT-SQL-FC",
++                   Database = "CitiStat",
++                   Trusted_Connection = "True",
++                   host = "localhost",
++                   port = 1433)
++ }, error = function(err) {
++   
++   # if analytics report fails to render send me an email
++   print("Please connect to VPN and manually rerun.",  title  = "Shooting Environment Report")
++   
++   render_email <- envelope() %>%
++     emayili::from(config$from_address) %>%
++     emayili::to(Sys.getenv("april.welch@baltimorecity.gov")) %>%
++     emayili::subject("Shooting Environment Report: Not Connected to VPN") %>%
++     emayili::html("Connect to VPN and manually run report script.")
++   
++   smtp <- server(host = "smtp.gmail.com",
++                  port = 587,
++                  username = config$from_address,
++                  password = config$password)
++   
++   smtp(render_email)
++ }
++ )
+> 
+> 
+> message(paste0(Sys.time(), ": Getting crime data from SQL server"))
+2022-09-08 08:26:14: Getting crime data from SQL server
+> 
+> # part 1 crime query
+> violent_crime <- tbl(con, "Part1_Crime")  %>%
++   filter(`Crime Date` >= "2020-01-01")
+> 
+> # sr query
+> #sr <- tbl(con, "CSR")  %>%
+>  # filter(`Created Date` >= "2021-02-10")
+> sr <- dbGetQuery(con, "SELECT [SR ID],
++ [Service Request Number],
++ [SR Type],
++ [Agency],
++ [Created Date],
++ [SR Status],
++ [Status Date],
++ [Priority],
++ [Due Date],
++ [Week Number],
++ [Street Address],
++ [Zip Code],
++ [Neighborhood],
++ [Latitude],
++ [Longitude],
++ [Police District],
++ [Council District],
++ [geo_east_west],
++ [Close Date],
++ [CHIP ID],
++ [SF Source],
++ [Contact Email],
++ [Borough],
++ [HashedRecord]
++ FROM CitiStat.dbo.CSR
++ Where [Created Date] >= \'2020-01-01\'")
+> # run queries 
+> violent_crime <- collect(violent_crime)
+> message(paste0(Sys.time(), ": Crime data retrieved from SQL server"))
+2022-09-08 08:27:36: Crime data retrieved from SQL server
+> sr <- collect(sr)
+> message(paste0(Sys.time(), ": Service request data retrieved from SQL server"))
+2022-09-08 08:27:36: Service request data retrieved from SQL server
+> 
+> # clean up field names in violent crime
+> names(violent_crime)<-str_replace_all(names(violent_crime), c(" " = "" ))
+> names(sr)<-str_replace_all(names(sr), c(" " = "" ))
+> 
+> violent_crime <- violent_crime %>%
++   rename_all(funs(tolower)) %>%
++   rename(district = "policedistrict")
+Warning message:
+`funs()` was deprecated in dplyr 0.8.0.
+Please use a list of either functions or lambdas: 
+
+  # Simple named list: 
+  list(mean = mean, median = median)
+
+  # Auto named with `tibble::lst()`: 
+  tibble::lst(mean, median)
+
+  # Using lambdas
+  list(~ mean(., trim = .2), ~ median(., na.rm = TRUE))
+This warning is displayed once every 8 hours.
+Call `lifecycle::last_warnings()` to see where this warning was generated. 
+> 
+> sr <- sr %>%
++   rename_all(funs(tolower)) %>%
++   rename("servicerequestnum" = "servicerequestnumber")
+> 
+> # get date of last crime in table
+> last_crime <- max(as.Date(violent_crime$crimedate), na.rm = T)
+> 
+> # filter crime down to shootings in last week 
+> shootings <- violent_crime %>%
++   filter(description %in% c("HOMICIDE", "SHOOTING"),
++          crimedate <= last_crime - 2,
++          crimedate >= last_crime - 9)
+> 
+> # get latitude and longitude from geometry
+> # sr <- sr %>%
+> #   mutate(
+> #     latitude = unlist(map(sr$geometry,1)),
+> #     longitude = unlist(map(sr$geometry,2)))
+> 
+> # Render analytics report ------------------
+> 
+> message(paste0(Sys.time(), ": Starting report render"))
+2022-09-08 08:27:38: Starting report render
+> 
+> tryCatch({
++   
++   if (last_crime >= today() -  7){
++     
++     # render analytics report
++     rmarkdown::render(
++       input = "analytics.Rmd",
++       output_file = analytics_filename,
++       #output_file = "example.nb.html",
++       #output_file = "garbage.nb.html",
++       output_dir = "reports",
++       clean = T
++     ) 
++     
++   } else {
++     
++     # send me an email if the data out of date (deprecate)
++     #notify("Open Baltimore is more than one week out of date. Report not rendered.",  
++      #      title  = "Shooting Environment Report")
++     
++     ob_ood_email <- envelope() %>%
++       emayili::from(config$from_address) %>%
++       emayili::to(Sys.getenv("CITY_EMAIL")) %>%
++       emayili::subject("Shooting Environment Report: Open Baltimore Out of Date") %>%
++       emayili::html("Open Baltimore is more than one week out of date. Contact BPD & BCIT to refresh.")
++     
++     smtp <- server(host = "smtp.gmail.com",
++                    port = 587,
++                    username = config$from_address,
++                    password = config$password)
++     
++     smtp(ob_ood_email)
++   }
++   
++   
++ }, error = function(err) {
++   
++   # if analytics report fails to render send me an email
++ #  notify("Analytics report rendering failed. Check logs.",  title  = "Shooting Environment Report")
++   
++   render_email <- envelope() %>%
++     emayili::from(getElement(config, "from_address")) %>%
++     emayili::to(Sys.getenv("CITY_EMAIL")) %>%
++     emayili::subject("Shooting Environment Report: Analytics Render Failure") %>%
++     emayili::html("Analytics report failed to render. Check logs.")
++   
++   smtp <- server(host = "smtp.gmail.com",
++                  port = 587,
++                  username = config$from_address,
++                  password = config$password)
++   
++   smtp(render_email)
++   
++ })
+
+
+processing file: analytics.Rmd
+  |                                                                              |                                                                      |   0%  |                                                                              |...                                                                   |   4%
+   inline R code fragments
+
+  |                                                                              |.....                                                                 |   7%
+label: unnamed-chunk-1 (with options) 
+List of 2
+ $ echo  : logi FALSE
+ $ engine: chr "css"
+
+  |                                                                              |........                                                              |  11%
+   inline R code fragments
+
+  |                                                                              |..........                                                            |  15%
+label: setup (with options) 
+List of 4
+ $ include: logi FALSE
+ $ echo   : logi FALSE
+ $ message: logi FALSE
+ $ cache  : logi FALSE
+
+  |                                                                              |.............                                                         |  19%
+  ordinary text without R code
+
+  |                                                                              |................                                                      |  22%
+label: load_packages
+Linking to GEOS 3.9.0, GDAL 3.2.1, PROJ 7.2.1
+Loading required package: showtext
+Loading required package: sysfonts
+Loading required package: showtextdb
+
+Attaching package: 'kableExtra'
+
+The following object is masked from 'package:dplyr':
+
+    group_rows
+
+  |                                                                              |..................                                                    |  26%
+  ordinary text without R code
+
+  |                                                                              |.....................                                                 |  30%
+label: unnamed-chunk-2
+  |                                                                              |.......................                                               |  33%
+  ordinary text without R code
+
+  |                                                                              |..........................                                            |  37%
+label: unnamed-chunk-3
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  post = col_double(),
+  total_incidents = col_double(),
+  crimetime = col_time(format = "")
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  geolocation.human_address = col_logical(),
+  lastactivitydate = col_logical(),
+  outcome = col_logical(),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  post = col_double(),
+  total_incidents = col_double()
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  geolocation.human_address = col_logical(),
+  lastactivitydate = col_datetime(format = ""),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  post = col_double(),
+  total_incidents = col_double()
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  geolocation.human_address = col_logical(),
+  lastactivitydate = col_datetime(format = ""),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  post = col_double(),
+  total_incidents = col_double()
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  geolocation.human_address = col_logical(),
+  lastactivitydate = col_datetime(format = ""),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  post = col_double(),
+  total_incidents = col_double()
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geolocation.latitude = col_double(),
+  geolocation.longitude = col_double(),
+  geolocation.human_address = col_logical(),
+  lastactivitydate = col_datetime(format = ""),
+  closedate = col_logical(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  post = col_double(),
+  total_incidents = col_double()
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  assigned_to = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double()
+  # ... with 12 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  assigned_to = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double()
+  # ... with 14 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double(),
+  crimedate = col_date(format = "")
+  # ... with 14 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  assigned_to = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double()
+  # ... with 15 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  assigned_to = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double()
+  # ... with 16 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  lastactivitydate = col_datetime(format = ""),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  geo_census_tract = col_double(),
+  geo_bulk_pickup_route = col_double(),
+  geo_fire_inspection_area = col_logical(),
+  geo_mixed_refuse_schedule = col_logical(),
+  geo_refuse_route_number = col_double(),
+  geo_tree_region = col_logical(),
+  block_number_c = col_double(),
+  details = col_logical(),
+  closedate = col_logical(),
+  borough = col_double(),
+  additionalcomments = col_logical(),
+  recordid = col_double(),
+  crimedate = col_date(format = "")
+  # ... with 15 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double(),
+  ycoordinate = col_double()
+  # ... with 4 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double(),
+  ycoordinate = col_double()
+  # ... with 4 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_datetime(format = ""),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_datetime(format = ""),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_number(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  ccno = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  xcoordinate = col_double(),
+  ycoordinate = col_double()
+  # ... with 4 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_logical(),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_datetime(format = ""),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double(),
+  ycoordinate = col_double()
+  # ... with 4 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_datetime(format = ""),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_double()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_logical()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical(),
+  xcoordinate = col_logical()
+  # ... with 5 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  ccno = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  ccno = col_number(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  ccno = col_number(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical()
+  # ... with 7 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_logical(),
+  dispositiondate = col_logical(),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+
+-- Column specification --------------------------------------------------------
+cols(
+  .default = col_character(),
+  createddate = col_datetime(format = ""),
+  statusdate = col_datetime(format = ""),
+  duedate = col_datetime(format = ""),
+  weeknumber = col_double(),
+  zipcode = col_double(),
+  councildistrict = col_double(),
+  closedate = col_logical(),
+  borough = col_double(),
+  recordid = col_double(),
+  crimedate = col_date(format = ""),
+  crimetime = col_time(format = ""),
+  weeknumber.1 = col_double(),
+  reporteddate = col_datetime(format = ""),
+  disposition = col_double(),
+  dispositiondate = col_datetime(format = ""),
+  post = col_double(),
+  victimage = col_double(),
+  domesticviolence = col_logical(),
+  commercial = col_logical(),
+  hatecrime = col_logical()
+  # ... with 6 more columns
+)
+i Use `spec()` for the full column specifications.
+
+  |                                                                              |.............................                                         |  41%
+  ordinary text without R code
+
+  |                                                                              |...............................                                       |  44%
+label: unnamed-chunk-4
+  |                                                                              |..................................                                    |  48%
+   inline R code fragments
+
+  |                                                                              |....................................                                  |  52%
+label: unnamed-chunk-5
+  |                                                                              |.......................................                               |  56%
+  ordinary text without R code
+
+  |                                                                              |.........................................                             |  59%
+label: unnamed-chunk-6 (with options) 
+List of 3
+ $ fig.width : num 6
+ $ fig.height: num 2
+ $ out.width : chr "100%"
+
+  |                                                                              |............................................                          |  63%
+   inline R code fragments
+
+  |                                                                              |...............................................                       |  67%
+label: unnamed-chunk-7 (with options) 
+List of 2
+ $ fig.width : num 6
+ $ fig.height: num 2
+
+  |                                                                              |.................................................                     |  70%
+  ordinary text without R code
+
+  |                                                                              |....................................................                  |  74%
+label: unnamed-chunk-8 (with options) 
+List of 3
+ $ fig.width : num 6
+ $ fig.height: num 3
+ $ out.width : chr "100%"
+
+  |                                                                              |......................................................                |  78%
+  ordinary text without R code
+
+  |                                                                              |.........................................................             |  81%
+label: unnamed-chunk-9 (with options) 
+List of 3
+ $ fig.width : num 8
+ $ fig.height: num 6
+ $ out.width : chr "100%"
+
+Scale for 'y' is already present. Adding another scale for 'y', which will
+replace the existing scale.
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+  |                                                                              |............................................................          |  85%
+  ordinary text without R code
+
+  |                                                                              |..............................................................        |  89%
+label: unnamed-chunk-10 (with options) 
+List of 3
+ $ out.width : chr "100%"
+ $ fig.width : num 8
+ $ fig.height: num 6
+
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+geom_path: Each group consists of only one observation. Do you need to adjust
+the group aesthetic?
+  |                                                                              |.................................................................     |  93%
+  ordinary text without R code
+
+  |                                                                              |...................................................................   |  96%
+label: unnamed-chunk-11 (with options) 
+List of 1
+ $ include: logi FALSE
+
+  |                                                                              |......................................................................| 100%
+  ordinary text without R code
+
+
+output file: analytics.knit.md
+
+"C:\Program Files\Pandoc/pandoc" +RTS -K512m -RTS analytics.knit.md --to html4 --from markdown+autolink_bare_uris+tex_math_single_backslash --output pandoc1e4024f23931.nb.html --lua-filter "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmarkdown\lua\pagebreak.lua" --lua-filter "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmarkdown\lua\latex-div.lua" --self-contained --variable bs3=TRUE --standalone --section-divs --table-of-contents --toc-depth 2 --variable toc_float=1 --variable toc_selectors=h1,h2 --variable toc_collapsed=1 --variable toc_smooth_scroll=1 --variable toc_print=1 --template "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmd\h\default.html" --no-highlight --variable highlightjs=1 --variable theme=bootstrap --include-in-header "C:\Users\SA_OPI\AppData\Local\Temp\2\RtmpIzWYAu\rmarkdown-str1e407e8cb7d.html" --mathjax --variable "mathjax-url:https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" --variable code_folding=hide --variable source_embed=analytics.Rmd --include-after-body "C:\Users\SA_OPI\AppData\Local\Temp\2\RtmpIzWYAu\file1e4057ae71c0.html" --variable code_menu=1 --variable kable-scroll=1 
+
+Output created: reports/performance_analytics_2022-09-08.nb.html
+> 
+> 
+> # Render new shooting environment report ---------------
+> 
+> tryCatch({
++   
++   if (last_crime >= today() -  7){
++     
++     # render report
++     rmarkdown::render(
++       input = "shooting_environment_report.Rmd",
++       output_file = filename,
++       #output_file = "example.nb.html",
++       #output_file = "garbage.nb.html",
++       output_dir = "reports",
++       clean = T
++     ) 
++     
++   } else {
++     
++     # if data out of date send me an email (deprecate)
++    # notify("Open Baltimore is more than one week out of date. Report not rendered.",  title  = "Shooting Environment Report")
++     
++     ob_ood_email <- envelope() %>%
++       emayili::from(config$from_address) %>%
++       emayili::to(Sys.getenv("CITY_EMAIL")) %>%
++       emayili::subject("Shooting Environment Report: Open Baltimore Out of Date") %>%
++       emayili::html("Open Baltimore is more than one week out of date. Contact BPD & BCIT to refresh.")
++     
++     smtp <- server(host = "smtp.gmail.com",
++                    port = 587,
++                    username = config$from_address,
++                    password = config$password)
++     
++     smtp(ob_ood_email)
++   }
++   
++   
++ }, error = function(err) {
++   
++   # if report render fails send me an email
++  # notify("Report Rendering Failed. Check Logs.",  title  = "Shooting Environment Report")
++   
++   render_email <- envelope() %>%
++     emayili::from(config$from_address) %>%
++     emayili::to(Sys.getenv("CITY_EMAIL")) %>%
++     emayili::subject("Shooting Environment Report: Render Failure") %>%
++     emayili::html("Shooting environment report failed to render. Check logs.")
++   
++   smtp <- server(host = "smtp.gmail.com",
++                  port = 587,
++                  username = config$from_address,
++                  password = config$password)
++   
++   smtp(render_email)
++   
++ })
+
+
+processing file: shooting_environment_report.Rmd
+  |                                                                              |                                                                      |   0%  |                                                                              |..                                                                    |   3%
+   inline R code fragments
+
+  |                                                                              |....                                                                  |   5%
+label: unnamed-chunk-1 (with options) 
+List of 2
+ $ echo  : logi FALSE
+ $ engine: chr "css"
+
+  |                                                                              |......                                                                |   8%
+   inline R code fragments
+
+  |                                                                              |.......                                                               |  11%
+label: setup (with options) 
+List of 4
+ $ include: logi FALSE
+ $ echo   : logi FALSE
+ $ message: logi FALSE
+ $ cache  : logi FALSE
+
+  |                                                                              |.........                                                             |  13%
+  ordinary text without R code
+
+  |                                                                              |...........                                                           |  16%
+label: load_packages
+  |                                                                              |.............                                                         |  18%
+   inline R code fragments
+
+  |                                                                              |...............                                                       |  21%
+label: unnamed-chunk-2
+  |                                                                              |.................                                                     |  24%
+  ordinary text without R code
+
+  |                                                                              |..................                                                    |  26%
+label: unnamed-chunk-3
+  |                                                                              |....................                                                  |  29%
+  ordinary text without R code
+
+  |                                                                              |......................                                                |  32%
+label: unnamed-chunk-4
+  |                                                                              |........................                                              |  34%
+  ordinary text without R code
+
+  |                                                                              |..........................                                            |  37%
+label: unnamed-chunk-5
+  |                                                                              |............................                                          |  39%
+  ordinary text without R code
+
+  |                                                                              |.............................                                         |  42%
+label: unnamed-chunk-6
+  |                                                                              |...............................                                       |  45%
+  ordinary text without R code
+
+  |                                                                              |.................................                                     |  47%
+label: unnamed-chunk-7
+  |                                                                              |...................................                                   |  50%
+  ordinary text without R code
+
+  |                                                                              |.....................................                                 |  53%
+label: unnamed-chunk-8
+  |                                                                              |.......................................                               |  55%
+  ordinary text without R code
+
+  |                                                                              |.........................................                             |  58%
+label: unnamed-chunk-9
+although coordinates are longitude/latitude, st_intersection assumes that they are planar
+  |                                                                              |..........................................                            |  61%
+  ordinary text without R code
+
+  |                                                                              |............................................                          |  63%
+label: unnamed-chunk-10
+  |                                                                              |..............................................                        |  66%
+  ordinary text without R code
+
+  |                                                                              |................................................                      |  68%
+label: unnamed-chunk-11
+  |                                                                              |..................................................                    |  71%
+   inline R code fragments
+
+  |                                                                              |....................................................                  |  74%
+label: unnamed-chunk-12
+  |                                                                              |.....................................................                 |  76%
+  ordinary text without R code
+
+  |                                                                              |.......................................................               |  79%
+label: unnamed-chunk-13 (with options) 
+List of 6
+ $ fig.width : num 6
+ $ fig.height: num 10
+ $ out.height: chr "100%"
+ $ out.width : chr "100%"
+ $ include   : logi TRUE
+ $ results   : chr "asis"
+
+  |                                                                              |.........................................................             |  82%
+  ordinary text without R code
+
+  |                                                                              |...........................................................           |  84%
+label: unnamed-chunk-14
+  |                                                                              |.............................................................         |  87%
+  ordinary text without R code
+
+  |                                                                              |...............................................................       |  89%
+label: unnamed-chunk-15 (with options) 
+List of 1
+ $ results: chr "asis"
+
+  |                                                                              |................................................................      |  92%
+  ordinary text without R code
+
+  |                                                                              |..................................................................    |  95%
+label: unnamed-chunk-16 (with options) 
+List of 1
+ $ results: chr "asis"
+
+  |                                                                              |....................................................................  |  97%
+  ordinary text without R code
+
+  |                                                                              |......................................................................| 100%
+label: unnamed-chunk-17 (with options) 
+List of 2
+ $ echo   : logi FALSE
+ $ include: logi FALSE
+
+
+output file: shooting_environment_report.knit.md
+
+"C:\Program Files\Pandoc/pandoc" +RTS -K512m -RTS shooting_environment_report.knit.md --to html4 --from markdown+autolink_bare_uris+tex_math_single_backslash --output pandoc1e401952450.nb.html --lua-filter "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmarkdown\lua\pagebreak.lua" --lua-filter "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmarkdown\lua\latex-div.lua" --self-contained --variable bs3=TRUE --standalone --section-divs --table-of-contents --toc-depth 2 --variable toc_float=1 --variable toc_selectors=h1,h2 --variable toc_collapsed=1 --variable toc_smooth_scroll=1 --variable toc_print=1 --template "C:\Users\SA_OPI\Documents\R\win-library\4.0\rmarkdown\rmd\h\default.html" --no-highlight --variable highlightjs=1 --variable theme=bootstrap --include-in-header "C:\Users\SA_OPI\AppData\Local\Temp\2\RtmpIzWYAu\rmarkdown-str1e40449b5344.html" --mathjax --variable "mathjax-url:https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML" --variable code_folding=hide --variable source_embed=shooting_environment_report.Rmd --include-after-body "C:\Users\SA_OPI\AppData\Local\Temp\2\RtmpIzWYAu\file1e4020085ca5.html" --variable code_menu=1 --variable kable-scroll=1 
+
+Output created: reports/shooting_environment_report_2022-09-08.nb.html
+Warning message:
+attribute variables are assumed to be spatially constant throughout all geometries 
+> 
+> 
+> # Send out new report and analytics report ---------
+> 
+> tryCatch({
++   
++   if (last_crime >= today() -  7){
++     
++     #attempt to send email
++     email_subject <- paste0(
++       "Shooting Environment Report, ", today()
++     )
++     
++     email_message <-  read_file("email_message.txt")
++     csv_filename <- paste0("shooting_environment_report_data_", today(), ".csv")
++     
++     email <- envelope() %>%
++       emayili::from(config$from_address) %>%
++       #emayili::to(guests$email_address) %>%
++       emayili::to(Sys.getenv("CITY_EMAIL")) %>%
++       emayili::subject(email_subject) %>%
++       emayili::html(email_message) %>%
++       emayili::attachment(
++         path = paste0("reports/", filename),
++         type = "text/html") %>%
++       emayili::attachment(
++         path = paste0("reports/", analytics_filename),
++         type = "text/html") %>%
++       emayili::attachment(
++         path = paste0("reports/", csv_filename),
++         type = "text/comma-separated-values")
++    
++     smtp <- server(host = "ssmtp.gmail.com",
++                    port = 587,
++                    username = config$from_address,
++                    password = config$password)
++     
++     message(paste0(Sys.time(), ": Attempting email send"))
++     smtp(email)
++     message(paste0(Sys.time(), ": Emails sent"))
++     
++     # notify me on laptop that report is sent
++   #  notify("Report sent.",  title  = "Shooting Environment Report")
++     
++     # move files to sent folder for analytics
++     file.copy(paste0("reports/", csv_filename), "reports/sent/")
++     file.copy(paste0("reports/", filename), "reports/sent/")
++     file.copy(paste0("reports/", analytics_filename), "reports/sent/")
++     file.remove(paste0("reports/", csv_filename))
++     file.remove(paste0("reports/", filename))
++     file.remove(paste0("reports/", analytics_filename))
++   }
++   
++   
++ }, error = function(err) {
++   
++   # notification on laptop if email fails
++  # notify("Report email failed to send.",  title  = "Shooting Environment Report")
++   
++   # also try to email me that the email failed
++   render_email <- envelope() %>%
++     emayili::from(config$from_address) %>%
++     emayili::to(config$recipient_url) %>%
++     emayili::subject("Shooting Environment Report: Email Failure") %>%
++     emayili::html("Shooting environment email failed to send. Check logs.")
++   
++   smtp <- server(host = "smtp.gmail.com",
++                  port = 587,
++                  username = config$from_address,
++                  password = config$password)
++   
++   smtp(render_email)
++   
++ })
+2022-09-08 08:28:05: Attempting email send
+Error: Request failed after 5 attempts
+Backtrace:
+    x
+ 1. \-base::tryCatch(...)
+ 2.   \-base:::tryCatchList(expr, classes, parentenv, handlers)
+ 3.     \-base:::tryCatchOne(expr, names, parentenv, handlers[[1L]])
+ 4.       \-value[[3L]](cond)
+ 5.         \-emayili:::smtp(render_email)
+ 6.           \-purrr:::send_mail(...)
+ 7.             \-purrr::rate_sleep(rate, quiet = quiet)
+ 8.               \-purrr:::stop_rate_excess(rate)
+Execution halted

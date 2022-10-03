@@ -1,7 +1,7 @@
 ---
 title: "Shooting Environment Service Request Performance"
 subtitle: ""
-author: <a href=mailto:justin.elszasz@baltimorecity.gov>justin.elszasz@baltimorecity.gov</a>
+author: <a href=mailto:april.welch@baltimorecity.gov>april.welch@baltimorecity.gov</a>
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 output:
   html_notebook:
@@ -71,7 +71,29 @@ report_list <- list.files("reports/sent/", pattern = "*.csv")
 for (report in report_list){
   
   report_temp <- read_csv(paste0("reports/sent/", report))
+  report_temp$createddate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
   report_temp$reportdate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  report_temp$statusdate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  report_temp$duedate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  report_temp$zipcode <- as.character(report)
+  report_temp$councildistrict <- as.character(report)
+  report_temp$lastactivitydate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  report_temp$crimedate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
+  report_temp$post <- as.character(report)
+  report_temp$weeknumber <- as.character(report)
+  report_temp$geo_census_tract <- as.character(report)
+  report_temp$geo_bulk_pickup_route <- as.character(report)
+  report_temp$geo_refuse_route_number <- as.character(report)
+  report_temp$block_number_c <- as.character(report)
+  report_temp$borough <- as.character(report)
+  report_temp$recordid <- as.character(report)
+  report_temp$weeknumber.1 <- as.character(report)
+  report_temp$ccno <- as.character(report)
+  report_temp$victimage <- as.character(report)
+  report_temp$xcoordinate <- as.character(report)
+  report_temp$ycoordinate <- as.character(report)
+  report_temp$councildistrict.1 <- as.character(report)
+  report_temp$updateddate <- as.POSIXct(substr(report, nchar(report) - 13, nchar(report) - 4))
   
   if (report == report_list[1]){
     all_reports <- report_temp
@@ -103,6 +125,7 @@ sr_filtered %>%
 
 ```{r, fig.width = 6, fig.height = 2, out.width = "100%"}
 all_reports %>% 
+  filter(reportdate >= "2021-06-01") %>%
   count(reportdate) %>%
   ggplot(aes(reportdate, n)) +
   geom_col() +
@@ -148,15 +171,15 @@ all_reports %>%
 #   
 ```
 
-```{r fig.width = 4, fig.height = 2, out.width="100%"}
+```{r fig.width = 6, fig.height = 3, out.width="100%"}
 reports_all_duedates_passed <- sr_filtered %>%
   group_by(reportdate) %>%
   summarise(last_duedate = max(duedate)) %>%
   filter(last_duedate < today()) %>%
   select(reportdate) %>%
-  pull()
+  pull(reportdate)
 
-sr_filtered %>%
+test <- sr_filtered %>%
   filter(reportdate %in% reports_all_duedates_passed) %>%
   filter(duedate < today()) %>%
   count(srtype, reportdate, closedate <= duedate) %>%
@@ -166,10 +189,18 @@ sr_filtered %>%
   ggplot(aes(reportdate, pct, color = srtype)) +
   geom_line() +
   geom_point() +
+  #NEW
+  geom_text(
+    aes(reportdate, pct, 
+        label = ifelse(reportdate == max(reportdate), paste0(100 * round(pct, 2), "%\n", n, " SRs"), "")),
+    nudge_y = -.1,
+    nudge_x = -3,
+    hjust = 1) + 
+  #END NEW
   facet_wrap(~srtype) +
   theme_iteam_presentations() +
   scale_y_continuous(limits = c(0,1), labels = scales::percent) +
-    #scale_x_datetime(breaks = "1 month", date_labels = format("%B\n%Y"))  +
+    scale_x_datetime(breaks = "1 month", date_labels = format("%B\n%Y"))  +
   theme_iteam_google_docs() +
   labs( x = "Date Report Sent",
        y = "Percent SRs Completed On-Time")
@@ -189,8 +220,9 @@ levels <- c(
   "More Than 30 Days"
 )
 
-
-close_windows <- sr_filtered %>%
+sr_filtered2 <- sr_filtered %>%
+  filter(reportdate > today()-60)
+close_windows <- sr_filtered2 %>%
   mutate(close_window = case_when(
     closedate <= (reportdate + days(7)) ~ "Within 7 Days", 
     closedate <= (reportdate + days(14)) ~ "Within 14 Days", 
@@ -222,7 +254,7 @@ close_windows %>%
     labels = scales::percent) +
   labs(x = element_blank()) +
   theme(axis.text.x = element_text(angle = 90))
-#scale_color_datetime(low = "gray90", high = "gray10")
+  #scale_color_datetime(low = "gray90", high = "gray10")
 
 ```
 
